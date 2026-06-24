@@ -1,0 +1,257 @@
+data:
+  # List of root directories containing images (flat structure, no labels needed):
+  #   <train_dir[0]>/**/*.tiff
+  # Images can be single-channel (H, W) or multi-channel (H, W, C).
+  # For SSL, all images are used without class labels (self-supervised).
+  train_dir:
+    # - "C:/Users/haohe/Desktop/2026-06-13_H1299_BC1-24_20x_sparse__2026-06-13T15_49_33-Measurement 3/objects_exported"
+    # - "C:/Users/haohe/Desktop/2026-06-14_H1299_BC1-24_20x_dense__2026-06-14T17_37_11-Measurement 1/objects_exported"
+    # - "C:/Users/haohe/Desktop/2026-06-17_BC1-24_20x__2026-06-17T19_26_53-Measurement 1/objects_exported"
+    - "C:\Users\haohe\Desktop\2026-06-18_BC1-24_20x__2026-06-18T18_45_03-Measurement 1\objects_exported"
+  # Optional separate validation directory (same structure as train_dir).
+  # If null, validation is auto-created by random shuffle of train_dir.
+  val_dir: null
+  # Fraction of training data to use for training (remainder goes to validation).
+  # Only used when val_dir is null.
+  train_val_split: 0.8
+  # If set to an integer, sample this many images per data source
+  # for quick pipeline verification. null = use all data.
+  # SL recommended: 24000. SSL recommended: 800 for testing, null for full data.
+  sample_n: 400
+  # "dataset" = sample_n per train_dir entry; "ensemble" = sample_n total across all entries.
+  # Use "dataset" when dirs have distinct content, "ensemble" when they overlap.
+  sample_by: dataset
+  # Number of DataLoader worker processes. On Windows this is forced to 0
+  # (multiprocessing spawn conflicts with PyTorch).
+  num_workers: 4
+  # Preload all preprocessed images into RAM at startup. Recommended when dataset
+  # fits in memory (<10 GB). Preprocessing runs once; augmentation still runs per-epoch.
+  preload: true
+  # ThreadPool workers for image preloading (data.preload: true).
+  preload_workers: 8
+  # DataLoader prefetch batches per worker. Only applies when num_workers > 0.
+  prefetch_factor: 4
+
+
+augmentation:
+  # ===== DINO Multi-Crop Augmentation =========================================
+  # Each image produces multiple views at different scales:
+  #   Global crops    (~full image)    → teacher + student
+  #   Structural crops (20-50% area)  → student only
+  #   Texture crops   (5-20% area)    → student only
+  #
+  # All views share the same spatial perturbation seed (deterministic consistency)
+  # but get independent intensity jitter.
+  #
+  # Parameter              ConvNeXt (default)    ViT Small
+  # =====================  ===================   ================================
+  # num_global_crops       2                     2
+  # num_structural_crops   4                     4
+  # num_texture_crops      4                     4
+  # structural_crop_resize 96                    96
+  # texture_crop_resize    64                    64
+  # rotation_degrees       360                   360
+  # =============================================================================
+
+  # Number of global-scale crops (resized to model.target_size).
+  # Both teacher and student process these. Typical: 2-3.
+  # More crops = richer training but higher memory.
+  num_global_crops: 2
+  # Number of medium-zoom structural crops. Student only.
+  # Sampled at 20-50% of foreground area, resized to structural_crop_resize.
+  num_structural_crops: 4
+  # Number of fine-detail texture crops. Student only.
+  # Sampled at 5-20% of foreground area (min 24 px), resized to texture_crop_resize.
+  num_texture_crops: 4
+  # Resize size for structural crops after foreground-area sampling.
+  # Must be >= backbone patch_size (16 for ViT). ConvNeXt handles any size.
+  structural_crop_resize: 96
+  # Resize size for texture crops. Can be smaller than structural.
+  texture_crop_resize: 64
+  # Maximum rotation angle in degrees (uniform from [-degrees, +degrees]).
+  # 360 = full rotation. Lower values (180) for less aggressive augmentation.
+  rotation_degrees: 360
+  # Probability of random horizontal flip (applied independently to each view).
+  # Range: 0.0 (never) to 1.0 (always). 0.5 = standard.
+  flip_prob: 0.5
+  # Whether to apply elastic deformation (grid_sample with random displacement).
+  # Enables non-rigid cell shape deformation. Adds compute cost.
+  # Recommended: false for speed, true for deformation-sensitive tasks.
+  use_elastic: false
+  # Elastic deformation alpha (displacement intensity).
+  # Only used when use_elastic: true. Higher = more warping.
+  elastic_alpha: 50.0
+  # Elastic deformation sigma (smoothness of displacement field).
+  # Only used when use_elastic: true. Higher = smoother warps.
+  elastic_sigma: 5.0
+  # Per-channel additive Gaussian noise standard deviation range: [min, max].
+  # Sampled uniformly per channel per image. 0 to disable.
+  noise_std_range: [0.05, 0.15]
+  # Gaussian blur kernel sigma range: [min, max].
+  # Applied as a random blur. 0 to disable.
+  blur_sigma_range: [0.1, 1.0]
+  # Per-channel multiplicative brightness jitter: [min, max].
+  # Each channel multiplied by a random factor in this range.
+  # 1.0 = no change. Range should include 1.0 (e.g. [0.85, 1.15]).
+  brightness_range: [0.85, 1.15]
+  # Probability of zeroing out each channel: [min, max] per channel.
+  # Simulates missing channels. Helps robustness to channel dropout.
+  # [0.15, 0.25] = 15-25% chance per channel. [0, 0] to disable.
+  channel_dropout_prob: [0.15, 0.25]
+
+
+model:
+  # Timm model identifier. See timm.list_models("*dinov3*") for DINOv3 backbones.
+  # Used only when model.finetune is null.
+  # ConvNeXt variants: convnext_nano, convnext_tiny, convnext_small
+  # ViT variants: vit_small_patch16_dinov3, vit_base_patch16_dinov3
+  backbone: convnext_nano
+  # 1-indexed channel indices to select from multi-channel TIFF images.
+  # E.g. [1, 2, 5] means "use the 1st, 2nd, and 5th channels from the TIFF".
+  # For single-channel (grayscale) TIFFs, use [1] or [2] depending on channel order.
+  # Image must have at least max(channel_indices) channels.
+  channel_indices: [2]
+  # Output spatial size after padding/resizing (global crops only).
+  # All images become (C, target_size, target_size).
+  # ConvNeXt: 128 works well. ViT: 224 minimum (patch_size 16, needs >= 14x14 grid).
+  target_size: 128
+  # If true and weights_path is null, download pretrained weights from HuggingFace Hub.
+  # If false, use random initialization (not recommended).
+  pretrained: true
+  # Path to a local .safetensors or .pth file for custom pretrained weights.
+  # Overrides automatic download. When set, pretrained is effectively ignored.
+  weights_path: null
+  # Override auto-detected first conv layer key for channel adaptation.
+  # Only needed if auto-detection fails (unusual backbone architecture).
+  # Common keys: "stem.0.weight" (ConvNeXt), "patch_embed.proj.weight" (ViT).
+  # Leave null for auto-detection.
+  stem_key_override: null
+  # Path to a previous SSL checkpoint for fine-tuning.
+  # When set, backbone + head are loaded from checkpoint.
+  # Training hyperparams (batch_size, lr, etc.) come from current config.
+  finetune: null
+
+
+head:
+  # ===== DINO Head =============================================================
+  # The head is a 3-layer MLP applied on top of pooled backbone features:
+  #   Linear → GELU → Linear → GELU → Linear → L2 norm → Linear (bias=False)
+  #
+  # Student and teacher each have their own head copy. Teacher is an EMA of
+  # student's head (not trained directly).
+  #
+  # Parameter              ConvNeXt/ViT (shared)
+  # =====================  ===========================
+  # head_hidden_dim        2048 (big) / 1024 (balanced)
+  # head_bottleneck_dim    256
+  # out_dim                8192 (default) / 65536 (DINOv2)
+  # student_temp           0.1
+  # teacher_temp           0.04
+  # center_momentum        0.9
+  # =============================================================================
+
+  # Hidden dimension for the first two MLP layers. Larger = more capacity,
+  # more memory. Recommended: 2048 for ViT (richer features), 1024 for ConvNeXt.
+  head_hidden_dim: 1024
+  # Bottleneck dimension (middle layer output). Kept small to regularize.
+  # Typically 256. No need to change.
+  head_bottleneck_dim: 256
+  # Output dimension = softmax vocabulary size. Should be a power of 2.
+  # Options:
+  #   4096   -- small vocabulary (lightweight)
+  #   8192   -- balanced (default)
+  #   65536  -- DINOv2 scale (rich representations, more memory)
+  #
+  # Must be consistent between training runs (checkpoint compatibility).
+  # Larger = more expressive but higher head memory (teacher + student).
+  # Recommended: keep at 8192 for most tasks.
+  out_dim: 8192
+  # Student softmax temperature. Lower values produce sharper distributions.
+  # Range: 0.05-0.2. 0.1 is standard DINO.
+  student_temp: 0.1
+  # Teacher softmax temperature. Higher = softer targets (easier for student).
+  # Teacher output is centered (mean-subtracted) before softmax.
+  # Range: 0.02-0.08. 0.04 is standard DINO.
+  teacher_temp: 0.04
+  # Exponential moving average momentum for center update.
+  # Center tracks the running mean of teacher outputs to avoid mode collapse.
+  # 0.9 = slow adaptation, 0.99 = very slow. 0.9 is standard.
+  center_momentum: 0.9
+
+
+training:
+  # Mini-batch size per training step.
+  # SSL: each image produces (num_global_crops + num_structural_crops + num_texture_crops)
+  # views, so effective crop count is batch_size × total_crops.
+  # SL: 128 for ConvNeXt, 32-64 for ViT. SSL: 32 ConvNeXt, 64 ViT.
+  batch_size: 32
+  # Maximum number of training epochs. SSL always runs full epoch count
+  # (no early stopping). SL may stop earlier via early_stopping_patience.
+  # SL recommended: 50-200. SSL recommended: 50-200 (real), 2 (smoke test).
+  epochs: 2
+  # Base learning rate for AdamW optimizer.
+  # SL: 1e-4 ConvNeXt, 5e-4 ViT. SSL: 2e-4 ConvNeXt, 5e-4 ViT.
+  lr: 0.0002
+  # AdamW weight decay (L2 regularization strength). Range: 0.04-0.2.
+  weight_decay: 0.05
+  # Number of linear warmup epochs: LR ramps from 0 to lr over these epochs.
+  # ConvNeXt: 5. ViT: 10-20 (ViT benefits from longer warmup).
+  warmup_epochs: 1
+  # Maximum gradient norm for clipping (prevents gradient spikes).
+  # null to disable. 3.0 recommended for ViT and SSL.
+  gradient_clip: 3.0
+  # Feature pooling strategy for backbone outputs.
+  # Options:
+  #   "gap"       -- global average pooling over spatial dimensions.
+  #                  Use for CNNs (ConvNeXt, ResNet, EfficientNet).
+  #                  Produces a single feature vector per image.
+  #   "cls_token" -- class token from the last transformer layer.
+  #                  Use for ViT (vit_* backbones).
+  #                  Requires backbone to output cls_token as first token.
+  pooling: gap
+  # EMA momentum for teacher parameter update at start of training.
+  # Teacher = momentum × teacher + (1 - momentum) × student.
+  # Range: 0.99-0.999. 0.996 is standard DINO.
+  ema_momentum_start: 0.996
+  # EMA momentum for teacher at end of training (ramps linearly from start).
+  # Reaching 1.0 means teacher completely freezes (no more student influence).
+  # Range: 0.999-1.0. 1.0 is standard DINO.
+  ema_momentum_end: 1.0
+
+
+analysis:
+  # Maximum total number of images for UMAP visualization and embedding export.
+  # If the dataset exceeds this, per-class balanced sampling is applied.
+  max_samples: 10000
+  # UMAP n_neighbors parameter (local neighborhood size for manifold learning).
+  # Lower = emphasis on local structure (5-15). Higher = global structure (15-30).
+  umap_n_neighbors: 15
+  # UMAP min_dist parameter (minimum distance between points in 2D embedding).
+  # Lower = tighter clusters (0.0-0.1). Higher = more spread (0.1-0.5).
+  umap_min_dist: 0.1
+
+
+strategy:
+  # Whether to extract a binary mask from channel 0 (foreground > 0) for
+  # foreground-only normalization and SSL foreground-crop sampling.
+  # Mask is re-derived after geometric transforms (no redundant mask warp).
+  # Options:
+  #   false -- full-image normalization (SSL crops use whole-image area).
+  #   true  -- foreground-only normalization, FG-crop samples from real foreground.
+  #            SSL: required for correct crop sampling. SL: not needed.
+  cell_mask: true
+  # How to handle images of different sizes before augmentation.
+  # Options:
+  #   true  -- pad to square, then resize to target_size (scale-invariant).
+  #   false -- pad to square, then: if oversized scale down, else zero-pad.
+  scale_pad: true
+  # Whether to normalize pixel intensities per channel.
+  # Options:
+  #   true  -- per-channel z-score normalization (foreground-only if mask).
+  #   false -- raw pixel values in float32.
+  normalize: true
+
+
+output:
+  # Directory where per-run output folders are created (runs/YYYYMMDD_HHMMSS/).
+  run_dir: runs

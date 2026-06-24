@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "microModel"
+dynamic = ["version"]
+description = "Microscopy image classification and feature extraction with timm backbones"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "timm>=0.9",
+    "tifffile",
+    "scipy",
+    "scikit-learn>=1.3",
+    "scikit-image",
+    "umap-learn",
+    "pyyaml",
+    "tqdm",
+    "pandas",
+    "openpyxl",
+    "safetensors",
+    "numpy",
+    "matplotlib",
+]
+
+[tool.hatch.version]
+path = "src/microModel/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/microModel"]
+
+[project.scripts]
+micromodel = "microModel.cli:main"

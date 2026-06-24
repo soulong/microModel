@@ -1,0 +1,153 @@
+data:
+  # List of root directories containing class-labeled subdirectories:
+  #   <train_dir[0]>/<class_name>/*.tiff
+  # Classes are unified across all directories -- same-named classes share labels.
+  # Images can be single-channel (H, W) or multi-channel (H, W, C).
+  train_dir:
+    # - "C:/Users/haohe/Desktop/2026-06-13_H1299_BC1-24_20x_sparse__2026-06-13T15_49_33-Measurement 3/objects_exported"
+    # - "C:/Users/haohe/Desktop/2026-06-14_H1299_BC1-24_20x_dense__2026-06-14T17_37_11-Measurement 1/objects_exported"
+    # - "C:/Users/haohe/Desktop/2026-06-17_BC1-24_20x__2026-06-17T19_26_53-Measurement 1/objects_exported"
+    - "C:\Users\haohe\Desktop\2026-06-18_BC1-24_20x__2026-06-18T18_45_03-Measurement 1\objects_exported"
+  # Optional separate validation directory (same structure as train_dir).
+  # If null, validation is auto-created by stratified splitting of train_dir.
+  val_dir: null
+  # Fraction of training data to use for training (remainder goes to validation).
+  # Only used when val_dir is null.
+  train_val_split: 0.8
+  # If set to an integer, sample this many images per data source
+  # for quick pipeline verification. null = use all data.
+  # Stratified across classes: each class gets up to sample_n // n_classes.
+  # SL recommended: 24000. SSL recommended: 800 for testing, null for full data.
+  sample_n: 400
+  # "dataset" = sample_n per train_dir entry; "ensemble" = sample_n total across all entries.
+  # Use "dataset" when dirs have distinct content, "ensemble" when they overlap.
+  sample_by: dataset
+  # Number of DataLoader worker processes. On Windows this is forced to 0
+  # (multiprocessing spawn conflicts with PyTorch).
+  num_workers: 4
+  # Preload all preprocessed images into RAM at startup. Recommended when dataset
+  # fits in memory (<10 GB). Preprocessing runs once; augmentation still runs per-epoch.
+  preload: true
+  # ThreadPool workers for image preloading (data.preload: true). 8 saturates
+  # disk I/O on most systems; reduce for network mounts or HDDs.
+  preload_workers: 8
+  # DataLoader prefetch batches per worker. Only applies when num_workers > 0.
+  prefetch_factor: 2
+
+augmentation:
+  # Maximum rotation angle in degrees. Rotation is uniformly sampled from
+  # [-rotation_degrees, +rotation_degrees].
+  rotation_degrees: 180
+  # Probability of random horizontal flip (applied independently from other transforms).
+  hflip_prob: 0.5
+  # Probability of random vertical flip.
+  vflip_prob: 0.5
+  # Scale range for random scaling: [min, max]. Applied as a uniform factor.
+  # Values < 1 shrink the cell, > 1 enlarge it.
+  scale_range: [0.75, 1.1]
+  # Maximum translation shift as fraction of image size: [horizontal, vertical].
+  # A value of 0.1 means shift up to 10% of image width/height in either direction.
+  translate_range: [0.1, 0.1]
+  # Maximum multiplicative brightness jitter. Applied as factor x (1 +- brightness).
+  brightness: 0.2
+  # Maximum contrast jitter. Applied as (pixel - mean) x (1 +- contrast) + mean.
+  contrast: 0.2
+  # Probability that the full augmentation pipeline is applied to a given sample.
+  # With probability (1 - apply_prob), the sample passes through without augmentation.
+  apply_prob: 0.8
+
+model:
+  # Timm model identifier. See timm.list_models("convnext*") for available backbones.
+  # Used only when model.finetune is null.
+  # ConvNeXt variants: convnext_nano(16M), convnext_tiny(28M), convnext_small(50M)
+  # ViT variants: vit_tiny_patch16_224(6M), vit_small_patch16_dinov3(22M), vit_base_patch16_dinov3(86M)
+  backbone: convnext_nano
+  # 1-indexed channel indices to select from multi-channel TIFF images.
+  # E.g. [1, 2, 5] means "use the 1st, 2nd, and 5th channels from the TIFF".
+  # Image must have at least max(channel_indices) channels.
+  channel_indices: [1, 2, 5]
+  # Output spatial size after padding/resizing (global crops for SSL).
+  # All images become (C, target_size, target_size).
+  # ConvNeXt: 128 works well. ViT: 224 minimum (patch_size 16, needs >= 14x14 grid).
+  target_size: 128
+  # If true and weights_path is null, download pretrained weights from HuggingFace Hub.
+  # If false, use random initialization (not recommended).
+  pretrained: true
+  # Path to a local .safetensors or .pth file for custom pretrained weights.
+  # Overrides automatic download. When set, pretrained is effectively ignored.
+  weights_path: null
+  # Optional: override auto-detected first conv layer key for channel adaptation.
+  # Only needed if auto-detection fails (e.g. unusual backbone architecture).
+  # Common keys: "stem.0.weight" (ConvNeXt), "patch_embed.proj.weight" (ViT),
+  #   "conv1.weight" (ResNet), "conv_stem.weight" (EfficientNet).
+  # Leave null for auto-detection.
+  stem_key_override: null
+  # Path to a best_model.pth or last_model.pth from a previous training run.
+  # When set, model architecture and weights are loaded from this checkpoint;
+  # model.backbone, channel_indices, target_size, pretrained, weights_path are IGNORED.
+  # Training hyperparams (batch_size, lr, etc.) and data paths still come from
+  # the current config. Classes are compared between checkpoint and new data:
+  #   - exact match: load directly, continue training
+  #   - checkpoint has extra classes: drop them (user confirmation required)
+  #   - new data has extra classes: init from first existing class (user confirmation required)
+  finetune: null
+
+training:
+  # Mini-batch size per training step.
+  # SL: 128 for ConvNeXt, 32-64 for ViT. SSL: 32 ConvNeXt, 64 ViT.
+  batch_size: 64
+  # Maximum number of training epochs. SL may stop earlier via early stopping
+  # (early_stopping_patience). SSL always runs full epoch count.
+  # SL recommended: 50-200. SSL recommended: 50-200 (real), 2 (smoke test).
+  epochs: 2
+  # Base learning rate for AdamW optimizer.
+  # SL: 1e-4 ConvNeXt, 5e-4 ViT. SSL: 2e-4 ConvNeXt, 5e-4 ViT.
+  lr: 5e-4
+  # AdamW weight decay (L2 regularization strength). Range: 0.04-0.2.
+  weight_decay: 0.05
+  # Number of linear warmup epochs: LR ramps from 0 to lr over these epochs.
+  # ConvNeXt: 5. ViT: 10-20 (ViT benefits from longer warmup).
+  warmup_epochs: 5
+  # Gamma parameter for Focal Loss (SL only). Higher values focus more on hard examples.
+  focal_loss_gamma: 2.0
+  # Number of epochs with no validation F1 improvement before training stops (SL only).
+  # Set to a large number (e.g. 999) to effectively disable early stopping.
+  early_stopping_patience: 5
+  # Maximum gradient norm for clipping (prevents gradient spikes).
+  # null to disable. 3.0 recommended for ViT and SSL.
+  gradient_clip: 3
+
+analysis:
+  # Maximum total number of images for UMAP visualization and embedding export.
+  # If the dataset exceeds this, per-class balanced sampling is applied.
+  max_samples: 10000
+  # UMAP n_neighbors parameter (local neighborhood size for manifold learning).
+  # Lower = emphasis on local structure (5-15). Higher = global structure (15-30).
+  umap_n_neighbors: 15
+  # UMAP min_dist parameter (minimum distance between points in 2D embedding).
+  # Lower = tighter clusters (0.0-0.1). Higher = more spread (0.1-0.5).
+  umap_min_dist: 0.1
+
+strategy:
+  # Whether to extract a binary mask from channel 0 (foreground > 0) for
+  # foreground-only normalization and mask-aware brightness/contrast.
+  # Mask is re-derived after geometric transforms (no redundant mask warp).
+  # Options:
+  #   false -- full-image normalization, brightness, contrast (recommended for SL).
+  #   true  -- foreground-only normalization, mask-guided brightness/contrast.
+  #            SL: not needed for classification. SSL: required for FG-crop sampling.
+  cell_mask: false
+  # How to handle images of different sizes before preprocessing.
+  # Options:
+  #   true  -- pad to square, then resize to target_size (scale-invariant).
+  #   false -- pad to square, then: if oversized scale down, else zero-pad.
+  scale_pad: true
+  # Whether to normalize pixel intensities per channel.
+  # Options:
+  #   true  -- per-channel z-score normalization (foreground-only if mask).
+  #   false -- raw pixel values in float32.
+  normalize: true
+
+output:
+  # Directory where per-run output folders are created (runs/YYYYMMDD_HHMMSS/).
+  run_dir: runs
